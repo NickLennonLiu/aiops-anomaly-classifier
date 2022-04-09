@@ -2,3 +2,4 @@
 thesis/
 workdir/
 data/
+src/__pycache__/

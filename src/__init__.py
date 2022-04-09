@@ -3,5 +3,5 @@ __all__ = ['params',
            'preprocess',
            'model',
            'main',
-           'statistics',
+           'stats',
            'config']

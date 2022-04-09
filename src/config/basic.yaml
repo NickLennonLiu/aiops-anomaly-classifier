@@ -1,2 +1,4 @@
 gt_path: ../data/groundtruth_a.xlsx
-dt_path: ../data/system-a/
+dt_raw: ../data/system-a/
+seed: 0
+workdir: /home/junetheriver/code/aiops/workdir/system_a

@@ -55,26 +55,12 @@ def test(gt, start):
     plt.show()
 
 
-def describe(dt):
-    """
-    :param dt: {cmdb_id: [kpi_df]}
-    :return: {cmdb_id: np.array(len(kpi), 7)}
-    (mean, std, min, 25%, 50%, 75%, max)
-    """
-    dt = dt.copy()
-    for cmdb_id in list(dt.keys()):
-        statistical = np.stack([df.describe()[1:] for df in dt[cmdb_id]], axis=2).squeeze().transpose()
-        dt[cmdb_id] = statistical
-    return dt
-
-
 if __name__ == "__main__":
     # tl = time_span("../data/system-a")
     # print(len(tl), min(tl), max(tl))
     # print((max(tl) - min(tl)) / 60)
     args = params.get_args()
     gt = dataloader.load_gt(args)
-    gt = preprocess.preprocess_gt(gt)
     start = 1614268800
     test(gt, start)
     # dt_path = "../data/system-a"
