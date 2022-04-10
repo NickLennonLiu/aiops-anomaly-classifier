@@ -27,6 +27,8 @@ def get_parser():
     parser.add_argument('--dt_raw', default='/home/junetheriver/code/aiops/data/system-a/')
     parser.add_argument('--kpi_plot', default=None)
     parser.add_argument('--class_num', default=8)
+    parser.add_argument('--epoch', default=10)
+    parser.add_argument('--lr', default=0.01)
 
     parser.add_argument('--workdir', default='/home/junetheriver/code/aiops/workdir/system_a')
     return parser

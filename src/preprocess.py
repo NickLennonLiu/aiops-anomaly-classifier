@@ -1,8 +1,9 @@
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 from pandas import DataFrame
-
+from src.model import get_kpi_at_time
 from src.params import get_args
 import src.dataloader as dataloader
 

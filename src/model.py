@@ -1,13 +1,11 @@
 import os
 import pickle
 from os.path import exists
-
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-
-from src import stats
+import torch.nn.functional as F
 
 
 def get_cmdb_dt(dt, cmdb_id):
@@ -16,10 +14,15 @@ def get_cmdb_dt(dt, cmdb_id):
 def get_kpi_dt(dt, kpi_name):
     return {key[0]: dt[key] for key in dt.keys() if key[1] == kpi_name}
 
-def get_kpi_at_time(dt, datetime):
+def get_kpi_at_time(dt, datetime, method=None):
+    datetime = datetime.ceil("min")
     return np.array([data.loc[datetime].value if (datetime in data.index)
                 else np.NaN
                 for data in dt.values()])
+
+def get_kpi_at_time_2(dt, datetime, method="nearest"):
+    return np.array([df.iloc[df.index.get_loc(datetime, method=method)] for df in dt.values()])
+
 
 def get_time_range(df):
     ranges = []
@@ -61,6 +64,9 @@ class Statistic(Model):
 
         self.time_range = self.get_time_range_dt()
         self.stats = self.get_describe()
+        self.median = self.get_stat_array("50%")
+        self.mean = self.get_stat_array("mean")
+        self.std = self.get_stat_array("std")
 
         self.fc = nn.Linear(len(self.data), self.class_num)
 
@@ -90,11 +96,17 @@ class Statistic(Model):
                 pickle.dump(des, f)
             return des
 
+    def get_stat_array(self, stat):
+        return np.array([self.stats[key].loc[stat] for key in self.stats.keys()]).squeeze()
+
     def forward(self, x):
         cmdb_id, timestamp = x
         x = get_kpi_at_time(self.data, timestamp)
-
-        return 0
+        x = np.divide(np.subtract(x, self.mean),self.std)
+        x = torch.nan_to_num(torch.tensor(x).float())
+        x = F.relu(self.fc(x))
+        x = F.softmax(x, dim=0)
+        return x
 
 
 
