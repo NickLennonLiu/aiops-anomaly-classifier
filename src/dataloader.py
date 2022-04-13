@@ -14,7 +14,7 @@ from os.path import exists
 
 from src.model import get_kpi_at_time
 from src.params import get_args
-from src.preprocess import preprocess_dt
+from src.preprocess import preprocess_dt, preprocess_gt
 
 cause_id = {"网络丢包": 0,
              "网络延迟": 1,
@@ -103,15 +103,21 @@ class MyDataset(Dataset):
     def __init__(self, args):
         gt_pre = os.path.join(args.workdir, "gt_pre.pkl")
         self.class_num = args.class_num
+        self.start_time = args.start_time
         if exists(gt_pre):
+            print("Loaded ground truth from gt_pre.pkl")
             df = self.load(os.path.join(args.workdir, "gt_pre.pkl"))
+            df = preprocess_gt(df, args.start_time)
             self.x = df.x.values
             self.y = df.y.values
         else:
             df = load_gt(args)
             self.x = list(zip(df.cmdb_id, df.time))
             self.y = df.故障内容.values
+
+        print(np.bincount(self.y))
         self.y = one_hot(self.y, self.class_num)
+
 
     def __len__(self):
         return len(self.x)
@@ -143,4 +149,3 @@ class MyDataset(Dataset):
 
 if __name__ == "__main__":
     _args = get_args()
-    load_dt(_args)
