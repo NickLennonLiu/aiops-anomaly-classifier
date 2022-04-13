@@ -16,8 +16,8 @@ def get_kpi_dt(dt, kpi_name):
     return {key[0]: dt[key] for key in dt.keys() if key[1] == kpi_name}
 
 def get_kpi_at_time(data, cmdb_idx, t, window=1):
-    t = int(t)
-    return data[t-window+1:t+1, cmdb_idx]
+    t = int(t+0.5)
+    return data[t:t+window, cmdb_idx]
 
 
 def get_time_range(df):
