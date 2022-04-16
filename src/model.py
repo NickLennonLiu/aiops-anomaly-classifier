@@ -38,6 +38,34 @@ def get_time_range(df):
     return pd.arrays.IntervalArray(ranges)
 
 
+class MLP(nn.Module):
+    def __init__(self, ni, no):
+        super().__init__()
+        self.fc1 = nn.Sequential(
+            nn.Linear(ni, 512), nn.ReLU(),
+            nn.Linear(512,160), nn.ReLU(),
+        )
+        self.l1 = nn.Sequential(
+            nn.Linear(40, 2),
+        )
+        self.l2 = nn.Sequential(
+            nn.Linear(80, 4),
+        )
+        self.l3 = nn.Sequential(
+            nn.Linear(40, 2)
+        )
+
+    def forward(self, x):
+        x = x.unsqueeze(dim=0)
+        x = x.to(torch.float32)
+        x = self.fc1(x)
+        x1 = self.l1(x[:,:40])
+        x2 = self.l2(x[:,40:120])
+        x3 = self.l3(x[:,120:])
+        x = torch.concat([x1, x2, x3], dim=1)
+        x = x[:,[0,1,6,2,3,4,7,5]]
+        return x
+
 class Model(nn.Module):
     def __init__(self, args):
         super().__init__()
@@ -98,22 +126,83 @@ class Basic(Model):
                 pickle.dump(des, f)
             return des
 
+
+class _SepConv1d(nn.Module):
+    """A simple separable convolution implementation.
+    The separable convlution is a method to reduce number of the parameters
+    in the deep learning network for slight decrease in predictions quality.
+    """
+    def __init__(self, ni, no, kernel, stride, pad):
+        super().__init__()
+        self.depthwise = nn.Conv1d(ni, ni, kernel, stride, padding=pad, groups=ni)
+        self.pointwise = nn.Conv1d(ni, no, kernel_size=1)
+
+    def forward(self, x):
+        return self.pointwise(self.depthwise(x))
+
+
+class SepConv1d(nn.Module):
+    """Implementes a 1-d convolution with 'batteries included'.
+    The module adds (optionally) activation function and dropout layers right after
+    a separable convolution layer.
+    """
+    def __init__(self, ni, no, kernel, stride, pad, drop=None,
+                 activ=lambda: nn.ReLU(inplace=True)):
+
+        super().__init__()
+        assert drop is None or (0.0 < drop < 1.0)
+        layers = [_SepConv1d(ni, no, kernel, stride, pad)]
+        if activ:
+            layers.append(activ())
+        if drop is not None:
+            layers.append(nn.Dropout(drop))
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, x):
+        # print(x.shape)
+        return self.layers(x)
+
+class Flatten(nn.Module):
+    """Converts N-dimensional tensor into 'flat' one."""
+
+    def __init__(self, keep_batch_dim=True):
+        super().__init__()
+        self.keep_batch_dim = keep_batch_dim
+
+    def forward(self, x):
+        if self.keep_batch_dim:
+            return x.view(x.size(0), -1)
+        return x.view(-1)
+
+
 class SingleCMDB_MLP(Basic):
     def __init__(self, args, data, kpi_name):
         super().__init__(args, data, kpi_name)
 
-        self.fc1 = nn.Linear(self.kpi_num, 50)
-        self.fc2 = nn.Linear(50, self.class_num)
+        self.dropout = nn.Dropout(p=0.1)
+
+        drop=.1
+
+        self.raw = nn.Sequential(
+            SepConv1d(self.kpi_num, 32, 8, 2, 3, drop=drop),
+            SepConv1d(32, 64, 8, 4, 2, drop=drop),
+            # SepConv1d(64, 128, 8, 4, 2, drop=drop),
+            # SepConv1d(128, 256, 8, 4, 2),
+            Flatten(),
+            # nn.Dropout(drop), nn.Linear(256, 64), nn.ReLU(inplace=True),
+            nn.Dropout(drop), nn.Linear(64, 64), nn.ReLU(inplace=True))
+
+        self.out = nn.Sequential(
+            nn.Linear(64, self.class_num), nn.ReLU(inplace=True)) #nn.Linear(128, 64),
 
     def forward(self, x):
         cmdb_id, timestamp = x
         cmdb_idx = self.cmdb_idx[cmdb_id]
         x = get_kpi_at_time(self.data, cmdb_idx, timestamp, window=self.window) # time_len x metrics
-        y = np.divide(np.abs(np.subtract(x, self.stats[1, cmdb_idx])), self.stats[0, cmdb_idx]+1e-10).unsqueeze(dim=0)
-        x = torch.mean(y, dim=1)
-        x = F.leaky_relu(self.fc1(x))
-        x = F.leaky_relu(self.fc2(x))
-        # x = F.relu(self.fc3(x))
+        x = torch.t(x).unsqueeze(dim=0)
+        x = F.normalize(x, dim=1)
+        x = self.raw(x)
+        x = self.out(x)
         return x
 
 class KStest(Basic):

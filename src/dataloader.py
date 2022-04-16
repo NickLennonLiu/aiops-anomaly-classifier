@@ -99,6 +99,25 @@ def one_hot(ys, n):
         result.append(a)
     return result
 
+class TSDataset(Dataset):
+    def __init__(self, df, y):
+        self.df = df
+        self.y = y
+    def __len__(self):
+        return len(self.df)
+    def __getitem__(self, item):
+        return self.df.id.loc[item], self.y.loc[item]
+
+class TensorDataset(Dataset):
+    def __init__(self, x, y, class_num):
+        self.x = x
+        self.y = y["y"].values
+        self.yy = one_hot(self.y, class_num)
+    def __len__(self):
+        return len(self.x)
+    def __getitem__(self, item):
+        return self.x[item], self.yy[item]
+
 class MyDataset(Dataset):
     def __init__(self, args):
         gt_pre = os.path.join(args.workdir, "gt_pre.pkl")
@@ -116,14 +135,14 @@ class MyDataset(Dataset):
             self.y = df.故障内容.values
 
         print(np.bincount(self.y))
-        self.y = one_hot(self.y, self.class_num)
+        self.yy = one_hot(self.y, self.class_num)
 
 
     def __len__(self):
         return len(self.x)
 
     def __getitem__(self, idx):
-        return self.x[idx], self.y[idx]
+        return self.x[idx], self.yy[idx]
 
     def load(self, filename):
         with open(filename, 'rb') as f:
