@@ -1,7 +1,7 @@
 __all__ = ['params',
            'dataloader',
            'preprocess',
-           'model',
+           'net.py',
            'main',
            'stats',
            'config']

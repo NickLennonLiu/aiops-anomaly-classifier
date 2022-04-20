@@ -37,13 +37,63 @@ def get_time_range(df):
         ranges.append(pd.Interval(start, end))
     return pd.arrays.IntervalArray(ranges)
 
+class Classifier(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.no = args.no   # class out
+        self.nsi = args.nsi   # stat_in
+        self.nso = args.nso   # stat_out
 
-class MLP(nn.Module):
-    def __init__(self, ni, no):
+        self.ni = args.ni  # feature_in
+        self.window = args.window
+        self.conv_out, self.conv_kernel, \
+            self.conv_stride, self.conv_pad = args.conv
+
+        self.conv_out_size = self.conv_out * int((self.window - self.conv_kernel + self.conv_pad*2 + self.conv_stride)/ self.conv_stride)
+
+        self.raw = nn.Sequential(
+            SepConv1d(self.ni * 2, self.conv_out, self.conv_kernel, self.conv_stride, self.conv_pad, drop=0.1), Flatten()
+        )
+        self.fft = nn.Sequential(
+            SepConv1d(self.ni * 2, self.conv_out, self.conv_kernel, self.conv_stride, self.conv_pad, drop=0.1), Flatten()
+        )
+        self.stat = nn.Sequential(
+            nn.Linear(self.nsi, 512), nn.ReLU(), nn.Dropout(0.5),
+            nn.Linear(512, self.nso), nn.ReLU(), nn.Dropout(0.2),
+        )
+
+        self.out = nn.Sequential(
+            nn.Linear(self.nso + self.conv_out_size, 64), nn.ReLU(),
+            nn.Linear(64, 8), nn.ReLU(),
+        )
+
+    def forward(self, x):
+        raw = torch.concat([x["before"], x["after"]], dim=1).unsqueeze(dim=0).permute((0,2,1)).to(torch.float32)
+        fft = torch.concat([x["before_fft"], x["after_fft"]], dim=1).unsqueeze(dim=0).permute((0,2,1)).to(torch.float32)
+        # raw = x["after"].unsqueeze(dim=0).permute((0, 2, 1)).to(torch.float32)
+        # fft = x["after_fft"].unsqueeze(dim=0).permute((0,2,1)).to(torch.float32)
+        stat = torch.concat([x["after_stat"], x["before_stat"], x["after_fft_stat"], x["before_fft_stat"]
+                        ]).unsqueeze(dim=0).to(torch.float32) # x["after_fft_stat"]
+
+        raw = torch.nan_to_num(raw)
+        fft = torch.nan_to_num(fft)
+        stat = torch.nan_to_num(stat)
+        raw = self.raw(raw)
+        fft = self.fft(fft)
+        stat = self.stat(stat)
+        # print(raw.shape, fft.shape, stat.shape)
+        # x = stat
+        x = torch.concat([raw, fft, stat], dim=1) #
+        # print(x.shape)
+        return self.out(x)
+
+
+class MLP8(nn.Module):
+    def __init__(self, ni):
         super().__init__()
         self.fc1 = nn.Sequential(
-            nn.Linear(ni, 512), nn.ReLU(),
-            nn.Linear(512,160), nn.ReLU(),
+            nn.Linear(ni, 512), nn.ReLU(), nn.Dropout(0.1),
+            nn.Linear(512,160), nn.ReLU(), nn.Dropout(0.1)
         )
         self.l1 = nn.Sequential(
             nn.Linear(40, 2),
@@ -56,8 +106,6 @@ class MLP(nn.Module):
         )
 
     def forward(self, x):
-        x = x.unsqueeze(dim=0)
-        x = x.to(torch.float32)
         x = self.fc1(x)
         x1 = self.l1(x[:,:40])
         x2 = self.l2(x[:,40:120])
@@ -66,20 +114,55 @@ class MLP(nn.Module):
         x = x[:,[0,1,6,2,3,4,7,5]]
         return x
 
-class Model(nn.Module):
-    def __init__(self, args):
+class _SepConv1d(nn.Module):
+    """A simple separable convolution implementation.
+    The separable convlution is a method to reduce number of the parameters
+    in the deep learning network for slight decrease in predictions quality.
+    """
+    def __init__(self, ni, no, kernel, stride, pad):
         super().__init__()
+        self.depthwise = nn.Conv1d(ni, ni, kernel, stride, padding=pad, groups=ni)
+        self.pointwise = nn.Conv1d(ni, no, kernel_size=1)
 
     def forward(self, x):
-        """
-        :param x:  (time, cmdb_id)
-        :return:   anomaly type in range(8)
-        """
-        return np.random.randint(0, self.label_num)
+        return self.pointwise(self.depthwise(x))
 
-class Basic(Model):
+class SepConv1d(nn.Module):
+    """Implementes a 1-d convolution with 'batteries included'.
+    The module adds (optionally) activation function and dropout layers right after
+    a separable convolution layer.
+    """
+    def __init__(self, ni, no, kernel, stride, pad, drop=None,
+                 activ=lambda: nn.ReLU(inplace=True)):
+
+        super().__init__()
+        assert drop is None or (0.0 < drop < 1.0)
+        layers = [_SepConv1d(ni, no, kernel, stride, pad)]
+        if activ:
+            layers.append(activ())
+        if drop is not None:
+            layers.append(nn.Dropout(drop))
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, x):
+        # print(x.shape)
+        return self.layers(x)
+
+class Flatten(nn.Module):
+    """Converts N-dimensional tensor into 'flat' one."""
+
+    def __init__(self, keep_batch_dim=True):
+        super().__init__()
+        self.keep_batch_dim = keep_batch_dim
+
+    def forward(self, x):
+        if self.keep_batch_dim:
+            return x.view(x.size(0), -1)
+        return x.view(-1)
+
+class Basic(nn.Module):
     def __init__(self, args, data, cmdb_kpi):
-        super().__init__(args)
+        super().__init__()
 
         self.data = F.pad(torch.nan_to_num(data), pad=(0,1)).to(torch.float32)
         self.cmdb_kpi = cmdb_kpi
@@ -125,55 +208,6 @@ class Basic(Model):
             with open(filename, 'wb') as f:
                 pickle.dump(des, f)
             return des
-
-
-class _SepConv1d(nn.Module):
-    """A simple separable convolution implementation.
-    The separable convlution is a method to reduce number of the parameters
-    in the deep learning network for slight decrease in predictions quality.
-    """
-    def __init__(self, ni, no, kernel, stride, pad):
-        super().__init__()
-        self.depthwise = nn.Conv1d(ni, ni, kernel, stride, padding=pad, groups=ni)
-        self.pointwise = nn.Conv1d(ni, no, kernel_size=1)
-
-    def forward(self, x):
-        return self.pointwise(self.depthwise(x))
-
-
-class SepConv1d(nn.Module):
-    """Implementes a 1-d convolution with 'batteries included'.
-    The module adds (optionally) activation function and dropout layers right after
-    a separable convolution layer.
-    """
-    def __init__(self, ni, no, kernel, stride, pad, drop=None,
-                 activ=lambda: nn.ReLU(inplace=True)):
-
-        super().__init__()
-        assert drop is None or (0.0 < drop < 1.0)
-        layers = [_SepConv1d(ni, no, kernel, stride, pad)]
-        if activ:
-            layers.append(activ())
-        if drop is not None:
-            layers.append(nn.Dropout(drop))
-        self.layers = nn.Sequential(*layers)
-
-    def forward(self, x):
-        # print(x.shape)
-        return self.layers(x)
-
-class Flatten(nn.Module):
-    """Converts N-dimensional tensor into 'flat' one."""
-
-    def __init__(self, keep_batch_dim=True):
-        super().__init__()
-        self.keep_batch_dim = keep_batch_dim
-
-    def forward(self, x):
-        if self.keep_batch_dim:
-            return x.view(x.size(0), -1)
-        return x.view(-1)
-
 
 class SingleCMDB_MLP(Basic):
     def __init__(self, args, data, kpi_name):

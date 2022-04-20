@@ -4,3 +4,5 @@ seed: 0
 workdir: /home/junetheriver/code/aiops/workdir/system_a
 start_time: 1614268800
 time_range: 38880
+
+conv: (64, 4, 2, 1)

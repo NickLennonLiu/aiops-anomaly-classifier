@@ -1,0 +1,5 @@
+gt_path: /home/junetheriver/code/aiops/data/groundtruth_b.xlsx
+dt_raw: /home/junetheriver/code/aiops/data/system-b/
+seed: 0
+workdir: /home/junetheriver/code/aiops/workdir/system_b
+start_time: 1616601660

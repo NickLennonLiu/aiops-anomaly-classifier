@@ -8,11 +8,12 @@ from itertools import islice
 
 import pandas
 import pandas as pd
+import torch
 from pandas import DataFrame
 from torch.utils.data import Dataset
 from os.path import exists
 
-from src.model import get_kpi_at_time
+from src.net import get_kpi_at_time
 from src.params import get_args
 from src.preprocess import preprocess_dt, preprocess_gt
 
@@ -24,6 +25,21 @@ cause_id = {"网络丢包": 0,
              "内存使用率过高": 5,
              "JVM OOM Heap": 6,
              "磁盘IO读使用率过高": 7}
+
+def get_cmdb(args):
+    data_filename = os.path.join(args.workdir, "data_pre.pkl")
+    # 如果有预处理过的数据，那么直接读取
+    if exists(data_filename):
+        print(f"Loading preprocessed data from {data_filename}")
+        data, kpi_name = load_preprocessed(data_filename)
+    else:
+        print(f"Loading raw data from {args.dt_raw}")
+        data = load_dt_raw(args)
+        data, kpi_name = preprocess_dt(data, args.start_time)
+        print(f"Saving preprocessed data to {data_filename}")
+        with open(data_filename, 'wb') as f:
+            pickle.dump([data, kpi_name], f)
+    return data, kpi_name
 
 def load_gt(args):
     gt_path = args.gt_path
@@ -38,6 +54,7 @@ def load_gt(args):
     df = DataFrame(data, index=idx, columns=cols).drop(["根因", "故障类别"], axis=1) # Remove '根因' for simplicity
     df["故障内容"] = df["故障内容"].map(lambda x: cause_id[x])
     df['time'] = pd.to_datetime(df.time)
+    df['time'] = df['time'] - pd.Timedelta('08:00:00')
     return df
 
 def load_preprocessed(filename):
@@ -57,13 +74,8 @@ def load_dt_raw(args):
         df = pd.read_csv(os.path.join(dt_path, file), index_col=0, usecols=[1,4])
         df.index = pd.to_datetime(df.index, unit="s")
         df = df[~df.index.duplicated()]
-        # df = df.rename(columns={"value": kpi_name})
         if df.nunique().iloc[0] > 1:
             data_dt[(cmdb_id, kpi_name)] = df
-            # if cmdb_id not in data_dt.keys():
-            #     data_dt[cmdb_id] = {kpi_name: df}
-            # else:
-            #     data_dt[cmdb_id][kpi_name] = df
     return data_dt
 
 def get_multiIndex(args):
@@ -97,7 +109,7 @@ def one_hot(ys, n):
         a = np.zeros(n)
         a[y] = 1
         result.append(a)
-    return result
+    return np.array(result)
 
 class TSDataset(Dataset):
     def __init__(self, df, y):
@@ -117,6 +129,25 @@ class TensorDataset(Dataset):
         return len(self.x)
     def __getitem__(self, item):
         return self.x[item], self.yy[item]
+
+class MyDataset2(Dataset):
+    def __init__(self, pp):
+        self.pp = pp
+        self.pp["y"] = self.pp["y"].values
+    def __len__(self):
+        return self.pp["y"].size
+    def __getitem__(self, item):
+        dt = {
+            "before": torch.from_numpy(self.pp["before"][self.pp["before"].id == item].values[:,2:].astype(np.float)),
+            "after": torch.from_numpy(self.pp["after"][self.pp["after"].id == item].values[:,2:].astype(np.float)),
+            "before_fft": torch.from_numpy(self.pp["before_fft"][self.pp["before_fft"].id == item].values[:,2:].astype(np.float)),
+            "after_fft": torch.from_numpy(self.pp["after_fft"][self.pp["after_fft"].id == item].values[:,2:].astype(np.float)),
+            "before_stat": torch.from_numpy(self.pp["before_stat"][item,:].astype(np.float)),
+            "after_stat": torch.from_numpy(self.pp["after_stat"][item,:].astype(np.float)),
+            "before_fft_stat": torch.from_numpy(self.pp["before_fft_stat"][item,:].astype(np.float)),
+            "after_fft_stat": torch.from_numpy(self.pp["after_fft_stat"][item,:].astype(np.float)),
+        }
+        return dt, one_hot(self.pp["y"][item],8)
 
 class MyDataset(Dataset):
     def __init__(self, args):

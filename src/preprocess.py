@@ -4,7 +4,9 @@ import numpy as np
 import pandas as pd
 import torch
 from pandas import DataFrame
-from src.model import get_kpi_at_time
+from sklearn.preprocessing import StandardScaler
+
+from src.net import get_kpi_at_time
 from src.params import get_args
 import src.dataloader as dataloader
 
@@ -46,7 +48,13 @@ def preprocess_dt(data, start_time):
     key_l = list(data.keys())
     df = pd.concat(data_l, axis=1)
     df.index = [int((index.timestamp() - start_time) / 60) for index in df.index]
-    return torch.tensor(df.values), key_l
+    # print(df.head())
+    # print(key_l)
+    df_tensor = torch.tensor(df.values)
+    # print(df_tensor)
+    ss = StandardScaler()
+    df_tensor = ss.fit_transform(df_tensor)
+    return df_tensor, key_l
 
 def preprocess_gt(df, start_time):
     df.x = [(x[0], (x[1].timestamp() - start_time) / 60) for x in df.x]
