@@ -18,8 +18,15 @@ def get_default_args():
         parser.set_defaults(**default_arg)
     return parser.parse_args([])
 
+def tuple_type(strings):
+    strings = strings.replace("(", "").replace(")", "")
+    mapped_int = map(int, strings.split(","))
+    return tuple(mapped_int)
+
 def get_parser():
     parser = argparse.ArgumentParser(description='Anomaly Classifier')
+    parser.add_argument('--model', default="Classifier")
+    parser.add_argument('--phase', default='full', choices=['full', 'train', 'eval'])
 
     parser.add_argument('--config', default=None)
     parser.add_argument('--seed', default=5)
@@ -32,14 +39,20 @@ def get_parser():
     parser.add_argument('--start_time')
     parser.add_argument('--time_range')
 
+    parser.add_argument('--wstart', default=0)
     parser.add_argument('--window', default=10)
+
     parser.add_argument('--no', default=8)
     parser.add_argument('--nsi', default=None)
     parser.add_argument('--nso', default=None)
     parser.add_argument('--ni', default=None)
-    parser.add_argument('--conv', type=tuple, default=None)
+    parser.add_argument('--conv', type=tuple_type, default=None)
 
     parser.add_argument('--workdir', default='/home/junetheriver/code/aiops/workdir/system_a')
+    parser.add_argument('--tag', default="")
+    parser.add_argument('--show_fail', type=str, default=None)
+
+    parser.add_argument('--depth', default=20)
     return parser
 
 

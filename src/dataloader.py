@@ -26,6 +26,26 @@ cause_id = {"网络丢包": 0,
              "JVM OOM Heap": 6,
              "磁盘IO读使用率过高": 7}
 
+def get_root_cause(args):
+    gt_path = args.gt_path
+    wb = openpyxl.load_workbook(gt_path)
+    ws = wb.active
+    data = ws.values
+    cols = next(data)[1:]
+    data = list(data)
+    idx = [r[0] for r in data]
+    data = (islice(r, 1, None) for r in data)
+    df = DataFrame(data, index=idx, columns=cols)
+    df["故障内容"] = df["故障内容"].map(lambda x: cause_id[x])
+    df['time'] = pd.to_datetime(df.time)
+    df['time'] = df['time'] - pd.Timedelta('08:00:00')
+    root_cause = {i: set() for i in range(8)}
+    rt_list = list(zip(df.根因, df.故障内容))
+    for rt, label in rt_list:
+        for key_metric in rt.split(';\n'):
+            root_cause[label].add(key_metric)
+    return root_cause
+
 def get_cmdb(args):
     data_filename = os.path.join(args.workdir, "data_pre.pkl")
     # 如果有预处理过的数据，那么直接读取
@@ -78,12 +98,28 @@ def load_dt_raw(args):
             data_dt[(cmdb_id, kpi_name)] = df
     return data_dt
 
+def get_gt(args):
+    gt_pre = os.path.join(args.workdir, "gt_pre.pkl")
+    if exists(gt_pre):
+        gt = load_preprocessed(gt_pre)
+    else:
+        gt = load_gt(args)
+        gt = preprocess_gt(gt, args.start_time)
+        with open(gt_pre, 'wb') as f:
+            pickle.dump(gt, f)
+    return gt
+
 def get_multiIndex(args):
-    dt_path = args.dt_path
+    dt_path = args.dt_raw
     cmdb_kpi = []
     for file in os.listdir(dt_path):
-        cmdb_id, kpi_name = os.path.splitext(file)[0].split('##')
-        cmdb_kpi.append((cmdb_id, kpi_name))
+        try:
+            cmdb_id, kpi_name = os.path.splitext(file)[0].split('##')
+            cmdb_kpi.append((cmdb_id, kpi_name))
+        except:
+            continue
+    print(f"{len(set([ck[0] for ck in cmdb_kpi]))}")
+    print(f"{len(set([ck[1] for ck in cmdb_kpi]))}")
     print(f"Loaded with {len(cmdb_kpi)} cmdb_kpi tuples")
     return pd.MultiIndex.from_tuples(cmdb_kpi)
 
@@ -138,14 +174,11 @@ class MyDataset2(Dataset):
         return self.pp["y"].size
     def __getitem__(self, item):
         dt = {
-            "before": torch.from_numpy(self.pp["before"][self.pp["before"].id == item].values[:,2:].astype(np.float)),
-            "after": torch.from_numpy(self.pp["after"][self.pp["after"].id == item].values[:,2:].astype(np.float)),
-            "before_fft": torch.from_numpy(self.pp["before_fft"][self.pp["before_fft"].id == item].values[:,2:].astype(np.float)),
-            "after_fft": torch.from_numpy(self.pp["after_fft"][self.pp["after_fft"].id == item].values[:,2:].astype(np.float)),
-            "before_stat": torch.from_numpy(self.pp["before_stat"][item,:].astype(np.float)),
-            "after_stat": torch.from_numpy(self.pp["after_stat"][item,:].astype(np.float)),
-            "before_fft_stat": torch.from_numpy(self.pp["before_fft_stat"][item,:].astype(np.float)),
-            "after_fft_stat": torch.from_numpy(self.pp["after_fft_stat"][item,:].astype(np.float)),
+            "x": self.pp["x"][item],
+            "ts": torch.from_numpy(self.pp["ts"][self.pp["ts"].id == item].values[:,2:]),
+            "fft": torch.from_numpy(self.pp["fft"][self.pp["fft"].id == item].values[:,2:].astype(np.float32)),
+            "stat": torch.from_numpy(self.pp["stat"][item,:]),
+            "fft_stat": torch.from_numpy(self.pp["fft_stat"][item,:]),
         }
         return dt, one_hot(self.pp["y"][item],8)
 

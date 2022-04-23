@@ -1,16 +1,16 @@
 gt_path: /home/junetheriver/code/aiops/data/groundtruth_a.xlsx
 dt_raw: /home/junetheriver/code/aiops/data/system-a/
-seed: 42
+seed: 0
 workdir: /home/junetheriver/code/aiops/workdir/system_a
 start_time: 1614268800
 time_range: 38880
 
-conv: (128,4,1,0)
+conv: (64,4,1,0)
 nso: 64
 
 wstart: -2
 window: 10
-tag: "w=(-2,10),c"
-model: Classifier
+tag: "w=(-2,10),c3"
+model: Classifier3
 show_fail: True
 epoch: 200

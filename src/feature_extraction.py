@@ -21,74 +21,72 @@ def get_cmdb_idx(cmdb_kpi, metric_num):
         cmdb_idx[cmdb] = a
     return cmdb_idx
 
-def get_kpi_at_time(data, cmdb_idx, t, window=1):
+def get_kpi_at_time(data, cmdb_idx, t, window=(0,1)):
     t = int(t)
-    return data[t:t+window, cmdb_idx]
+    return data[t+window[0]:t+window[1], cmdb_idx]
 
 
-def gen_timeseries(cmdb_idx_dt, gt, data, window, kpi_set):
-    dfs_before = []
-    dfs_after = []
+def gen_timeseries(cmdb_idx_dt, gt, data, window, kpi_set, dummy):
+    dfs= []
     labels = []
+    xs = []
     cnt = 0
     for idx, (x, y) in enumerate(zip(gt.x, gt.y)):
         cmdb_id, timestamp = x
         cmdb_idx = cmdb_idx_dt[cmdb_id]
-        tensor_after = get_kpi_at_time(data, cmdb_idx, timestamp, window)
-        tensor_before = get_kpi_at_time(data, cmdb_idx, timestamp - window, window)
-
-        if np.isnan(tensor_after).all() or np.isnan(tensor_before).all():
+        cmdb_idx_true = []
+        for cidx in cmdb_idx:
+            if cidx != dummy:
+                cmdb_idx_true.append(cidx)
+        time_window = get_kpi_at_time(data, cmdb_idx, timestamp, window)
+        t = int(timestamp)
+        if np.isnan(data[t + window[0]:t + window[1], cmdb_idx_true]).all():
+            # print(f"skipping {idx} {x} {y}")
             continue
-
-        df_a = DataFrame(tensor_after, columns=list(kpi_set))
+        df_a = DataFrame(time_window, columns=list(kpi_set))
         df_a.reset_index(inplace=True)
         df_a.rename(columns={"index":"timestamp"}, inplace=True)
 
-        df_b = DataFrame(tensor_before, columns=list(kpi_set))
-        df_b.reset_index(inplace=True)
-        df_b.rename(columns={"index": "timestamp"}, inplace=True)
-
-        if df_a.values.shape[0] == window and df_b.values.shape[0] == window:
-            df_b["id"] = pd.Series([cnt for i in range(len(df_b.index))])
+        if df_a.values.shape[0] == (window[1] - window[0]):
             df_a["id"] = pd.Series([cnt for i in range(len(df_a.index))])
             cols = list(df_a.columns)
             cols = [cols[-1]] + cols[:-1]
             df_a = df_a[cols]
-            df_b = df_b[cols]
 
+            # print(df_a.head())
+            xs.append(x)
             labels.append(y)
-            dfs_after.append(df_a)
-            dfs_before.append(df_b)
+            dfs.append(df_a)
             cnt += 1
 
-    ts_a = pd.concat(dfs_after)
-    ts_b = pd.concat(dfs_before)
-
+    ts = pd.concat(dfs)
     y_df = DataFrame(labels, columns=["y"])
-    return ts_a, ts_b, y_df
+    return ts, y_df, xs
 
 def get_timeseries(args, cmdb_kpi, data, gt, window):
-    ts_file = os.path.join(args.workdir, "timeseries.pkl")
+    ts_file = os.path.join(args.workdir, f"{window}_timeseries.pkl")
     if not os.path.exists(ts_file):
-        cmdb_set = set([ck[0] for ck in cmdb_kpi])
-        kpi_set = set([ck[1] for ck in cmdb_kpi])
+        cmdb_set = list(set([ck[0] for ck in cmdb_kpi]))
+        kpi_set = list(set([ck[1] for ck in cmdb_kpi]))
+        kpi_set.sort()
 
         cmdb_idx_dt = get_cmdb_idx(cmdb_kpi, len(cmdb_kpi))
         data = np.pad(data, ((0, 0), (0, 1)))
-        ts_a, ts_b, y_df = gen_timeseries(cmdb_idx_dt, gt, data, window, kpi_set)
+        ts, y_df, xs = gen_timeseries(cmdb_idx_dt, gt, data, window, kpi_set, len(cmdb_kpi))
 
-        ts_a = ts_a.loc[:, (ts_a != ts_a.iloc[0]).any()]
-        ts_a.dropna(how='all', inplace=True, axis=1)
-        cols = list(ts_a.columns)
-        ts_b = ts_b[cols]
-        ts_b.id = ts_b.id.astype('int64')
+        # ts = ts.loc[:, (ts != ts.iloc[0]).any()]
+        # ts.dropna(how='all', inplace=True, axis=1)
+
+        const_columns = (ts != ts.iloc[0]).any()
+        const_columns["timestamp"] = True
+        ts = ts.loc[:, const_columns]
+        ts.dropna(how='all', inplace=True, axis=1)
 
         timeseries = {
-            "after": ts_a,
-            "before": ts_b,
+            "x": xs,
+            "ts": ts,
             "y": y_df
         }
-
         with open(ts_file, 'wb') as f:
             pickle.dump(timeseries, f)
     else:
@@ -106,7 +104,7 @@ def get_fft(ts):
             continue
         t = ts[ts.id == i].loc[:, ts.columns[2]:]
         fft = abs(np.fft.fft(t, axis=0))
-        ft.loc[ft.id == i, ts.columns[2]:] = fft
+        ft.loc[ft.id == i, ts.columns[2]:] = fft.astype(np.float)
     return ft
 
 def get_stats(ts):
@@ -122,25 +120,20 @@ def get_stats(ts):
     describe = np.nan_to_num(describe)
     return describe
 
-def feature_extraction(data, cmdb_kpi, gt, window, args):
-    pp_file = os.path.join(args.workdir, "preprocess_data.pkl")
+def feature_extraction(data, cmdb_kpi, gt, args):
+    pp_file = os.path.join(args.workdir, f"{(args.wstart, args.wstart+args.window)}_preprocess_data.pkl")
     if os.path.exists(pp_file):
         with open(pp_file, 'rb') as f:
             pp = pickle.load(f)
         return pp
     else:
-        ts = get_timeseries(args, cmdb_kpi, data, gt, window)
-        ts_a = ts["after"]
-        ts_b = ts["before"]
-        y_df = ts["y"]
-        ft_a = get_fft(ts_a)
-        ft_b = get_fft(ts_b)
-        ts["after_fft"] = ft_a
-        ts["before_fft"] = ft_b
-        ts["after_stat"] = get_stats(ts_a)
-        ts["before_stat"] = get_stats(ts_b)
-        ts["after_fft_stat"] = get_stats(ft_a)
-        ts["before_fft_stat"] = get_stats(ft_b)
+        timeseries = get_timeseries(args, cmdb_kpi, data, gt, (args.wstart, args.wstart+args.window))
+        ts = timeseries["ts"]
+        y_df = timeseries["y"]
+        ft = get_fft(ts)
+        timeseries["fft"] = ft
+        timeseries["stat"] = get_stats(ts).astype(np.float)
+        timeseries["fft_stat"] = get_stats(ft).astype(np.float)
         with open(pp_file, 'wb') as f:
-            pickle.dump(ts, f)
-        return ts
+            pickle.dump(timeseries, f)
+        return timeseries

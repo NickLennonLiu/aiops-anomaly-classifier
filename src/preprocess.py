@@ -1,14 +1,8 @@
-from datetime import datetime
-
-import numpy as np
 import pandas as pd
 import torch
-from pandas import DataFrame
 from sklearn.preprocessing import StandardScaler
-
-from src.net import get_kpi_at_time
-from src.params import get_args
 import src.dataloader as dataloader
+from src.params import get_args
 
 cause_id = {"网络丢包": 0,
              "网络延迟": 1,
@@ -29,15 +23,14 @@ cause_to_type = [0, 0, 1, 2, 2, 2, 1, 2]
 
 cause_literal = list(cause_id.keys())
 
-def datetime_to_timestamp(datetime_str):
-    """
-    :param datetime_str:
-    :return:
-    example:    2021-02-26 03:55:02.253467
-    """
-    return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S.%f").timestamp()
-
 def preprocess_dt(data, start_time):
+    """
+    加载指标数据，
+    1. 填充10Min内的空缺
+    2. 时间轴平移到start_time为始的原点，单位长度min
+    3. standard scaling
+    最后合并到一个Dataframe
+    """
     for key in data.keys():
         data[key] = data[key].resample("Min").mean()
         data[key].fillna(limit=10, method='ffill', inplace=True)
@@ -48,15 +41,19 @@ def preprocess_dt(data, start_time):
     key_l = list(data.keys())
     df = pd.concat(data_l, axis=1)
     df.index = [int((index.timestamp() - start_time) / 60) for index in df.index]
-    # print(df.head())
-    # print(key_l)
+    # df.sort_index(inplace=True)
     df_tensor = torch.tensor(df.values)
-    # print(df_tensor)
     ss = StandardScaler()
     df_tensor = ss.fit_transform(df_tensor)
     return df_tensor, key_l
 
 def preprocess_gt(df, start_time):
+    """
+    将时间轴平移到以start_time为原点，单位min
+    """
+    df.cmdb_id = list(zip(df.cmdb_id, df.time))
+    df = df.rename(columns={"cmdb_id": "x", "故障内容": "y"})
+    df.drop(['time'], axis=1, inplace=True)
     df.x = [(x[0], (x[1].timestamp() - start_time) / 60) for x in df.x]
     return df
 

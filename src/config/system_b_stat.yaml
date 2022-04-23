@@ -9,7 +9,7 @@ nso: 64
 
 wstart: -2
 window: 10
-tag: "w=(-2,10),c"
-model: Classifier
+tag: "w=(-2,10),stat"
+model: Stat
 show_fail: True
 epoch: 200

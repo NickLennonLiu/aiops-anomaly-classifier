@@ -19,6 +19,9 @@ def get_kpi_at_time(data, cmdb_idx, t, window=1):
     t = int(t+0.5)
     return data[t:t+window, cmdb_idx]
 
+def get_cmdb_all(data, cmdb_idx):
+    return data[:, cmdb_idx]
+
 
 def get_time_range(df):
     ranges = []
@@ -45,6 +48,7 @@ class Classifier(nn.Module):
         self.nso = args.nso   # stat_out
 
         self.ni = args.ni  # feature_in
+        assert self.ni is not None, "You need to specify number of features inputted!"
         self.window = args.window
         self.conv_out, self.conv_kernel, \
             self.conv_stride, self.conv_pad = args.conv
@@ -52,11 +56,103 @@ class Classifier(nn.Module):
         self.conv_out_size = self.conv_out * int((self.window - self.conv_kernel + self.conv_pad*2 + self.conv_stride)/ self.conv_stride)
 
         self.raw = nn.Sequential(
-            SepConv1d(self.ni * 2, self.conv_out, self.conv_kernel, self.conv_stride, self.conv_pad, drop=0.1), Flatten()
+            SepConv1d(self.ni, self.conv_out, self.conv_kernel, self.conv_stride, self.conv_pad, drop=0.1), Flatten()
         )
         self.fft = nn.Sequential(
-            SepConv1d(self.ni * 2, self.conv_out, self.conv_kernel, self.conv_stride, self.conv_pad, drop=0.1), Flatten()
+            SepConv1d(self.ni, self.conv_out, self.conv_kernel, self.conv_stride, self.conv_pad, drop=0.1), Flatten()
         )
+        self.stat = nn.Sequential(
+            nn.Linear(self.nsi, 512), nn.ReLU(), nn.Dropout(0.5),
+            nn.Linear(512, self.nso), nn.ReLU(), nn.Dropout(0.2),
+        )
+
+        self.out = nn.Sequential(
+            nn.Linear(self.nso + self.conv_out_size*2, 64), nn.ReLU(),
+            nn.Linear(64, 8), nn.ReLU(),
+        )
+
+    def forward(self, x):
+        raw = x["ts"].unsqueeze(dim=0).permute((0,2,1)).to(torch.float32)
+        fft = x["fft"].unsqueeze(dim=0).permute((0,2,1)).to(torch.float32)
+
+        stat = torch.concat([x["stat"], x["fft_stat"]
+                        ]).unsqueeze(dim=0).to(torch.float32) # x["after_fft_stat"]
+
+        raw = torch.nan_to_num(raw)
+        fft = torch.nan_to_num(fft)
+        stat = torch.nan_to_num(stat)
+        raw = self.raw(raw)
+        fft = self.fft(fft)
+        stat = self.stat(stat)
+        x = torch.concat([raw, fft, stat], dim=1)
+        return self.out(x)
+
+class Classifier3(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.no = args.no   # class out
+        self.nsi = args.nsi   # stat_in
+        self.nso = args.nso   # stat_out
+
+        self.ni = args.ni  # feature_in
+        assert self.ni is not None, "You need to specify number of features inputted!"
+        self.window = args.window
+        self.conv_out, self.conv_kernel, \
+            self.conv_stride, self.conv_pad = args.conv
+
+        self.conv_out_size = self.ni * int((self.window - self.conv_kernel + self.conv_pad*2 + self.conv_stride)/ self.conv_stride)
+
+        self.raw = nn.Sequential(
+            MyConv1d(self.ni, self.conv_out, self.conv_kernel, self.conv_stride, self.conv_pad, self.conv_out_size, drop=0.1), Flatten()
+        )
+        # self.fft = nn.Sequential(
+        #     MyConv1d(self.ni, self.conv_out, self.conv_kernel, self.conv_stride, self.conv_pad, self.conv_out_size, drop=0.1), Flatten()
+        # )
+        self.stat = nn.Sequential(
+            nn.Linear(self.nsi, 512), nn.ReLU(), nn.Dropout(0.5),
+            nn.Linear(512, self.nso), nn.ReLU(), nn.Dropout(0.2),
+        )
+
+        self.out = nn.Sequential(
+            nn.Linear(self.nso + self.conv_out, 64), nn.ReLU(),
+            nn.Linear(64, 8), nn.ReLU(),
+        )
+
+    def forward(self, x):
+        raw = x["ts"].unsqueeze(dim=0).permute((0,2,1)).to(torch.float32)
+        # fft = x["fft"].unsqueeze(dim=0).permute((0,2,1)).to(torch.float32)
+
+        # stat = torch.concat([x["stat"], x["fft_stat"]
+        #                 ]).unsqueeze(dim=0).to(torch.float32) # x["after_fft_stat"]
+        stat = x["stat"].unsqueeze(dim=0).to(torch.float32) # x["after_fft_stat"]
+
+        raw = torch.nan_to_num(raw)
+        stat = torch.nan_to_num(stat)
+        raw = self.raw(raw)
+        # print(raw.shape)
+        stat = self.stat(stat)
+        x = torch.concat([raw, stat], dim=1)
+        return self.out(x)
+
+class Classifier2(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.no = args.no   # class out
+        self.nsi = args.nsi   # stat_in
+        self.nso = args.nso   # stat_out
+
+        self.ni = args.ni  # feature_in
+        assert self.ni is not None, "You need to specify number of features inputted!"
+        self.window = args.window
+        self.conv_out, self.conv_kernel, \
+            self.conv_stride, self.conv_pad = args.conv
+
+        self.conv_out_size = self.conv_out * int((self.window - self.conv_kernel + self.conv_pad*2 + self.conv_stride)/ self.conv_stride)
+
+        self.raw = nn.Sequential(
+            SepConv1d(self.ni, self.conv_out, self.conv_kernel, self.conv_stride, self.conv_pad, drop=0.1), Flatten()
+        )
+
         self.stat = nn.Sequential(
             nn.Linear(self.nsi, 512), nn.ReLU(), nn.Dropout(0.5),
             nn.Linear(512, self.nso), nn.ReLU(), nn.Dropout(0.2),
@@ -68,24 +164,39 @@ class Classifier(nn.Module):
         )
 
     def forward(self, x):
-        raw = torch.concat([x["before"], x["after"]], dim=1).unsqueeze(dim=0).permute((0,2,1)).to(torch.float32)
-        fft = torch.concat([x["before_fft"], x["after_fft"]], dim=1).unsqueeze(dim=0).permute((0,2,1)).to(torch.float32)
-        # raw = x["after"].unsqueeze(dim=0).permute((0, 2, 1)).to(torch.float32)
-        # fft = x["after_fft"].unsqueeze(dim=0).permute((0,2,1)).to(torch.float32)
-        stat = torch.concat([x["after_stat"], x["before_stat"], x["after_fft_stat"], x["before_fft_stat"]
-                        ]).unsqueeze(dim=0).to(torch.float32) # x["after_fft_stat"]
+        raw = x["ts"].unsqueeze(dim=0).permute((0, 2, 1)).to(torch.float32)
+        stat = x["stat"].unsqueeze(dim=0).to(torch.float32)
 
         raw = torch.nan_to_num(raw)
-        fft = torch.nan_to_num(fft)
         stat = torch.nan_to_num(stat)
         raw = self.raw(raw)
-        fft = self.fft(fft)
         stat = self.stat(stat)
-        # print(raw.shape, fft.shape, stat.shape)
-        # x = stat
-        x = torch.concat([raw, fft, stat], dim=1) #
-        # print(x.shape)
+        x = torch.concat([raw, stat], dim=1)
         return self.out(x)
+
+class Stat(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.no = args.no   # class out
+        self.nsi = args.nsi   # stat_in
+        self.nso = args.nso   # stat_out
+
+        self.stat = nn.Sequential(
+            nn.Linear(self.nsi, 512), nn.ReLU(),
+            nn.Linear(512, self.nso), nn.ReLU(),
+        )
+
+        self.out = nn.Sequential(
+            nn.Linear(self.nso, 64), nn.ReLU(),
+            nn.Linear(64, 8), nn.ReLU(),
+        )
+
+    def forward(self, x):
+        stat = x["stat"].unsqueeze(dim=0).to(torch.float32) # x["after_fft_stat"]
+        stat = torch.nan_to_num(stat)
+        x = self.stat(stat)
+        x = self.out(x)
+        return x
 
 
 class MLP8(nn.Module):
@@ -126,6 +237,32 @@ class _SepConv1d(nn.Module):
 
     def forward(self, x):
         return self.pointwise(self.depthwise(x))
+
+class _MyConv1d(nn.Module):
+    def __init__(self, ni, no, kernel, stride, pad, conv_out):
+        super().__init__()
+        self.depthwise = nn.Conv1d(ni, ni, kernel, stride, padding=pad, groups=ni)
+        self.pointwise = nn.Linear(conv_out, no)
+
+    def forward(self, x):
+        return self.pointwise(self.depthwise(x).flatten().unsqueeze(dim=0))
+
+class MyConv1d(nn.Module):
+    def __init__(self, ni, no, kernel, stride, pad, conv_out, drop=None,
+                 activ=lambda: nn.ReLU(inplace=True)):
+
+        super().__init__()
+        assert drop is None or (0.0 < drop < 1.0)
+        layers = [_MyConv1d(ni, no, kernel, stride, pad, conv_out)]
+        if activ:
+            layers.append(activ())
+        if drop is not None:
+            layers.append(nn.Dropout(drop))
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, x):
+        # print(x.shape)
+        return self.layers(x)
 
 class SepConv1d(nn.Module):
     """Implementes a 1-d convolution with 'batteries included'.
